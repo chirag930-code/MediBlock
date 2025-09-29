@@ -1,0 +1,195 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+/**
+ * @title MediBlock
+ * @dev A decentralized medical records management system
+ */
+contract MediBlock {
+    
+    struct MedicalRecord {
+        uint256 recordId;
+        address patient;
+        address doctor;
+        string diagnosis;
+        string treatment;
+        uint256 timestamp;
+        bool isActive;
+    }
+    
+    struct Patient {
+        address patientAddress;
+        string name;
+        uint256[] recordIds;
+        mapping(address => bool) authorizedDoctors;
+        bool isRegistered;
+    }
+    
+    struct Doctor {
+        address doctorAddress;
+        string name;
+        string specialization;
+        bool isVerified;
+    }
+    
+    mapping(address => Patient) public patients;
+    mapping(address => Doctor) public doctors;
+    mapping(uint256 => MedicalRecord) public medicalRecords;
+    
+    uint256 public recordCounter;
+    address public admin;
+    
+    event PatientRegistered(address indexed patient, string name);
+    event DoctorVerified(address indexed doctor, string name, string specialization);
+    event RecordCreated(uint256 indexed recordId, address indexed patient, address indexed doctor);
+    event DoctorAuthorized(address indexed patient, address indexed doctor);
+    event DoctorRevoked(address indexed patient, address indexed doctor);
+    
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "Only admin can perform this action");
+        _;
+    }
+    
+    modifier onlyRegisteredPatient() {
+        require(patients[msg.sender].isRegistered, "Patient not registered");
+        _;
+    }
+    
+    modifier onlyVerifiedDoctor() {
+        require(doctors[msg.sender].isVerified, "Doctor not verified");
+        _;
+    }
+    
+    constructor() {
+        admin = msg.sender;
+        recordCounter = 0;
+    }
+    
+    /**
+     * @dev Register a new patient
+     * @param _name Patient's name
+     */
+    function registerPatient(string memory _name) public {
+        require(!patients[msg.sender].isRegistered, "Patient already registered");
+        require(bytes(_name).length > 0, "Name cannot be empty");
+        
+        Patient storage newPatient = patients[msg.sender];
+        newPatient.patientAddress = msg.sender;
+        newPatient.name = _name;
+        newPatient.isRegistered = true;
+        
+        emit PatientRegistered(msg.sender, _name);
+    }
+    
+    /**
+     * @dev Verify a doctor (admin only)
+     * @param _doctorAddress Address of the doctor
+     * @param _name Doctor's name
+     * @param _specialization Doctor's specialization
+     */
+    function verifyDoctor(
+        address _doctorAddress,
+        string memory _name,
+        string memory _specialization
+    ) public onlyAdmin {
+        require(!doctors[_doctorAddress].isVerified, "Doctor already verified");
+        require(bytes(_name).length > 0, "Name cannot be empty");
+        require(bytes(_specialization).length > 0, "Specialization cannot be empty");
+        
+        doctors[_doctorAddress] = Doctor({
+            doctorAddress: _doctorAddress,
+            name: _name,
+            specialization: _specialization,
+            isVerified: true
+        });
+        
+        emit DoctorVerified(_doctorAddress, _name, _specialization);
+    }
+    
+    /**
+     * @dev Create a new medical record
+     * @param _patient Address of the patient
+     * @param _diagnosis Diagnosis details
+     * @param _treatment Treatment details
+     */
+    function createMedicalRecord(
+        address _patient,
+        string memory _diagnosis,
+        string memory _treatment
+    ) public onlyVerifiedDoctor {
+        require(patients[_patient].isRegistered, "Patient not registered");
+        require(
+            patients[_patient].authorizedDoctors[msg.sender],
+            "Doctor not authorized by patient"
+        );
+        require(bytes(_diagnosis).length > 0, "Diagnosis cannot be empty");
+        require(bytes(_treatment).length > 0, "Treatment cannot be empty");
+        
+        recordCounter++;
+        
+        medicalRecords[recordCounter] = MedicalRecord({
+            recordId: recordCounter,
+            patient: _patient,
+            doctor: msg.sender,
+            diagnosis: _diagnosis,
+            treatment: _treatment,
+            timestamp: block.timestamp,
+            isActive: true
+        });
+        
+        patients[_patient].recordIds.push(recordCounter);
+        
+        emit RecordCreated(recordCounter, _patient, msg.sender);
+    }
+    
+    /**
+     * @dev Authorize a doctor to access medical records
+     * @param _doctor Address of the doctor to authorize
+     */
+    function authorizeDoctor(address _doctor) public onlyRegisteredPatient {
+        require(doctors[_doctor].isVerified, "Doctor not verified");
+        require(!patients[msg.sender].authorizedDoctors[_doctor], "Doctor already authorized");
+        
+        patients[msg.sender].authorizedDoctors[_doctor] = true;
+        
+        emit DoctorAuthorized(msg.sender, _doctor);
+    }
+    
+    /**
+     * @dev Revoke doctor's access to medical records
+     * @param _doctor Address of the doctor to revoke
+     */
+    function revokeDoctor(address _doctor) public onlyRegisteredPatient {
+        require(patients[msg.sender].authorizedDoctors[_doctor], "Doctor not authorized");
+        
+        patients[msg.sender].authorizedDoctors[_doctor] = false;
+        
+        emit DoctorRevoked(msg.sender, _doctor);
+    }
+    
+    /**
+     * @dev Get all record IDs for a patient
+     * @param _patient Address of the patient
+     * @return Array of record IDs
+     */
+    function getPatientRecords(address _patient) public view returns (uint256[] memory) {
+        require(
+            msg.sender == _patient || 
+            patients[_patient].authorizedDoctors[msg.sender] || 
+            msg.sender == admin,
+            "Not authorized to view records"
+        );
+        
+        return patients[_patient].recordIds;
+    }
+    
+    /**
+     * @dev Check if a doctor is authorized by a patient
+     * @param _patient Address of the patient
+     * @param _doctor Address of the doctor
+     * @return Boolean indicating authorization status
+     */
+    function isDoctorAuthorized(address _patient, address _doctor) public view returns (bool) {
+        return patients[_patient].authorizedDoctors[_doctor];
+    }
+}
